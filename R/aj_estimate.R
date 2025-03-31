@@ -226,6 +226,7 @@ create_estimates_with_assumptions <- function(
 add_cutoff_strata <- function( data, by ) {
 
   data |>
+    dplyr::group_by( reference_group ) |>
     dplyr::mutate(
       strata_probability_threshold = cut(
         probs,
@@ -235,7 +236,8 @@ add_cutoff_strata <- function( data, by ) {
       ),
       strata_ppcr = dplyr::ntile( dplyr::desc(probs), 1 / by),
       strata_ppcr = factor((strata_ppcr) / (1 / by))
-    )
+    ) |>
+    dplyr::ungroup()
 
 }
 

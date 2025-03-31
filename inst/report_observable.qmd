@@ -1,0 +1,263 @@
+---
+title: "rtichoke Competing"
+format: html
+editor: visual
+echo: false
+message: false
+warning: false
+---
+
+## Histogram of Predictions
+
+```{r}
+# Train Model
+
+library(rticompeting)
+library(survival)
+library(dcurves)
+library(gtsummary); library(dplyr); library(tidyr)
+library(reactable)
+cox_model <- coxph(
+  Surv(ttcancer, cancer) ~
+    age + famhistory + marker, data = df_surv)
+
+thin_model <- coxph(
+  Surv(ttcancer, cancer) ~
+    age + marker, data = df_surv)
+
+df_surv <- df_surv |>
+  dplyr::mutate(
+    reals = dplyr::case_when(
+      cancer_cr == "censor" ~ 0,
+      cancer_cr == "diagnosed with cancer" ~ 1,
+      cancer_cr == "dead other causes" ~ 2
+    )
+  )
+
+pred_1_5 <- broom::augment(
+  cox_model,
+  newdata = df_surv %>% mutate(ttcancer =  1.5),
+  type.predict = "expected"
+) |>
+  mutate(
+    pr_failure18 = 1 - exp(-.fitted)
+  ) |>
+  pull(pr_failure18)
+
+pred_thin <- broom::augment(
+  thin_model,
+  newdata = df_surv %>% mutate(ttcancer =  1.5),
+  type.predict = "expected"
+) |>
+  mutate(
+    pr_failure18 = 1 - exp(-.fitted)
+  ) |>
+  pull(pr_failure18)
+
+
+## Create aj_data
+
+probs_cox <- list(
+  "thin" = pred_thin,
+  "full" = pred_1_5
+)
+
+fixed_time_horizons <- c(1, 3, 5)
+stratified_by <- c("probability_threshold", "ppcr")
+
+# TODO: add parameter for assumption sets
+
+aj_data_combinations <- create_aj_data_combinations(
+  names(probs_cox),
+  fixed_time_horizons,
+  stratified_by,
+  0.01
+)
+
+
+# Fix for Reference Groups
+
+# TODO: add data_to_adjust <- preprocess_data_before_adjustment(probs, reals, times, fixed_time_horizons, stratified_by, by)
+
+data_to_adjust <- tibble::tibble(
+  reference_group = c(rep("thin", length(probs_cox$thin)), # TODO: change to expandgrid/map
+  rep("full", length(probs_cox$thin))),
+  probs = c(probs_cox$thin, probs_cox$full),
+  reals = c(df_surv$reals, df_surv$reals),
+  times = c(df_surv$ttcancer, df_surv$ttcancer)
+) |>
+  add_cutoff_strata(by = 0.01)|>  # TODO: add stratified by
+  tidyr::pivot_longer(
+    cols = tidyr::starts_with("strata"),
+    names_to = "stratified_by",
+    values_to = "strata",
+    names_prefix = "strata_") |>
+  dplyr::mutate(
+    reals = factor(
+      dplyr::recode(
+        reals,
+        `0` = "real_negatives",
+        `2` = "real_competing",
+        `1` = "real_positives"
+      ),
+      levels = c("real_negatives", "real_competing", "real_positives") # Setting reference level
+    )
+  )
+
+
+list_data_to_adjust <- data_to_adjust |>
+  dplyr::group_split(reference_group, .keep = FALSE) |>
+  purrr::set_names(unique(data_to_adjust$reference_group))
+
+
+# Adjust data by Assumptions
+
+assumption_sets <- list(
+  list(competing = "excluded", censored = "excluded"),
+  list(competing = "adjusted_as_negative", censored = "adjusted"),
+  list(competing = "adjusted_as_censored", censored = "adjusted"),
+  list(competing = "excluded", censored = "adjusted"),
+  list(competing = "adjusted_as_negative", censored = "excluded")#,
+  # list(competing = "adjusted_as_censored", censored = "excluded")
+)
+
+
+adjusted_data <- purrr::map(
+  list_data_to_adjust,
+  \(reference_group) purrr::map(
+    assumption_sets,
+    \(.x) extract_aj_estimate_by_assumptions(
+      reference_group,
+      censoring_assumption = .x$censored,
+      competing_assumption = .x$competing,
+      fixed_time_horizons = fixed_time_horizons
+    )
+  ) |>
+    dplyr::bind_rows()
+) |>
+  dplyr::bind_rows(.id = "reference_group")
+
+adjusted_data <- aj_data_combinations |> 
+  dplyr::left_join(
+    adjusted_data
+  )
+
+
+```
+
+```{r}
+ojs_define(reference_groups_data = c("thin", "full"))
+
+ojs_define(data = adjusted_data)
+
+```
+
+```{ojs}
+//| panel: input
+
+viewof time_horizon = Inputs.range(
+  [1, 5], 
+  {value: 3, step: 2, label: "Time Horizon:"}
+)
+
+viewof reference_group = Inputs.radio(
+  reference_groups_data, {label: "Reference Group"}
+)
+
+viewof stratified_by = Inputs.radio(
+  ["probability_threshold", "ppcr"], {value: "probability_threshold", label: "Stratified By"}
+)
+
+viewof censored_assumption = Inputs.radio(
+  ["excluded", "adjusted"], {value: "excluded", label: "Censored Assumption"}
+)
+
+viewof competing_assumption = Inputs.radio(
+  ["excluded", "adjusted_as_negative", "adjusted_as_censored"], {value: "excluded", label: "Competing Assumption"}
+)
+
+
+
+```
+
+<!-- ```{ojs} -->
+<!-- //Inputs.table( -->
+<!-- //cumulative_aj_data_filtered, { -->
+<!-- //  columns: ["strata", "outcome", "predicted_negatives", "predicted_positives"]}) -->
+
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- reactable::reactable( -->
+
+<!--   cumulative_aj_data, -->
+
+<!--   columns = list( -->
+
+<!--     reference_group = reactable::colDef( -->
+
+<!--       filterMethod = filterIncludesValue -->
+
+<!--     ) -->
+
+<!--   ), -->
+
+<!--   elementId = 'tbl' -->
+
+<!--   ) -->
+
+<!-- ``` -->
+
+<!-- ```{ojs} -->
+
+<!-- Reactable.setFilter('tbl', 'reference_group', reference_group) -->
+
+<!-- ``` -->
+
+```{ojs}
+
+//cumulative_aj_data_filtered = transpose(cumulative_aj_data).filter(function(subset) {
+//
+//  return time_horizon == subset.fixed_time_horizon &&
+//         censored_assumption == subset.censored_assumption &&
+//         competing_assumption == subset.competing_assumption &&
+//         stratified_by == subset.stratified_by && 
+//         reference_group === subset.reference_group;
+//})
+
+filtered = transpose(data).filter(function(subset) {
+
+  return time_horizon == subset.fixed_time_horizon &&
+         censored_assumption == subset.censoring_assumption &&
+         competing_assumption == subset.competing_assumption &&
+         stratified_by == subset.stratified_by && 
+         reference_group === subset.reference_group;
+})
+
+filtered
+
+
+```
+
+```{ojs}
+
+  
+Plot.plot({
+  marks: [
+    Plot.barY(filtered, { 
+      x: "strata", 
+      y: "reals_estimate", 
+      fill: "reals", 
+      tip: true 
+    })
+  ],
+  color: {
+    domain: ["real_positives", "real_competing", "real_negatives", "real_censored"], 
+    range: ["#009e73", "#9DB4C0", "#FAC8CD", "#E3F09B"],
+    legend: true
+  }
+})
+
+```

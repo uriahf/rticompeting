@@ -1,6 +1,6 @@
 
 create_aj_data_combinations <- function(
-    probs, fixed_time_horizons, stratified_by, by) {
+    reference_groups, fixed_time_horizons, stratified_by, by) {
 
   strata_combinations <- stratified_by |>
     purrr::map_df(
@@ -19,7 +19,7 @@ create_aj_data_combinations <- function(
     levels = paste("real", c("negatives", "positives", "competing", "censored"), sep = "_"))
 
   tidyr::expand_grid(
-   reference_group = names(probs),
+   reference_group = reference_groups,
    fixed_time_horizon = fixed_time_horizons,
    reals = reals,
    censoring_assumption = c("excluded", "adjusted"),
@@ -29,6 +29,13 @@ create_aj_data_combinations <- function(
      "adjusted_as_censored"),
    strata_combinations
   )
+
+}
+
+
+preprocess_data_before_adjustment <- function( probs, reals, times, stratified_by, by) {
+
+
 
 }
 
@@ -120,7 +127,7 @@ extract_aj_estimate <- function(data_to_adjust, fixed_time_horizons) {
       reals
     ) ~
       strata,
-    data = data_to_adjust,
+    data = data_to_adjust |> mutate(reals = as.factor(reals)),
     istate = rep("real_negatives", length(data_to_adjust$times))
   )
 
@@ -280,6 +287,21 @@ extract_aj_estimate_by_assumptions <- function(
 
     aj_estimate_data <- extract_aj_estimate(
       data_to_adjust,
+      fixed_time_horizons = fixed_time_horizons
+    )
+
+  } else if (censoring_assumption == "adjusted" &
+             competing_assumption == "adjusted_as_censored") {
+
+
+    aj_estimate_data <- extract_aj_estimate(
+      data_to_adjust |>
+        dplyr::mutate(
+          reals = dplyr::case_when(
+            reals == 'real_competing' ~ 'real_negatives',
+            TRUE ~ reals
+          )
+        ),
       fixed_time_horizons = fixed_time_horizons
     )
 

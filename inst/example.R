@@ -189,6 +189,7 @@ aj_data_combinations <- create_aj_data_combinations(
 View(aj_data_combinations)
 
 
+
 aj_data_combinations <- create_aj_data_combinations(
   list(
     "thin" = pred_thin
@@ -256,7 +257,7 @@ aj_data_combinations |>
   View()
 
 
-# Censored Excluded, Competing Adjusted
+# Censored Excluded, Competing Adjusted as Negatives
 
 aj_data_combinations |>
   dplyr::filter(
@@ -291,7 +292,7 @@ data_to_adjust |>
   ) |>
   View()
 
-# Censored Adjusted, Competing Adjusted
+# Censored Adjusted, Competing Adjusted as Negative
 
 
 adjusted_data <- data_to_adjust |>
@@ -305,24 +306,41 @@ adjusted_data <- data_to_adjust |>
                                           "censored"), sep = "_")))
 
 
-waldo::compare(
-  levels(adjusted_data$strata),
-  levels(aj_data_combinations$strata)
-)
-
-adjusted_data |>
-  select(strata) |>
-  distinct() |>
-  left_join(
-    adjusted_data |> select(strata, fixed_time_horizon))
-
 aj_data_combinations |>
   dplyr::filter(
     censoring_assumption == "adjusted",
     competing_assumption == "adjusted_as_negative") |>
   dplyr::left_join(
     adjusted_data,
-    by = "strata"
+    # by = "strata"
+    # by = c(
+    # "strata", "reals", "censoring_assumption", "fixed_time_horizon",
+    # "competing_assumption"
+    # )
+  ) |>
+  View()
+
+# Censored Adjusted, Competing Adjusted as Censored
+
+
+adjusted_data <- data_to_adjust |>
+  extract_aj_estimate_by_assumptions(
+    censoring_assumption = "adjusted",
+    competing_assumption = "adjusted_as_censored",
+    fixed_time_horizons = fixed_time_horizons
+  ) |>
+  mutate(
+    reals = factor(reals, paste("real", c("negatives", "positives", "competing",
+                                          "censored"), sep = "_")))
+
+
+aj_data_combinations |>
+  dplyr::filter(
+    censoring_assumption == "adjusted",
+    competing_assumption == "adjusted_as_censored") |>
+  dplyr::left_join(
+    adjusted_data,
+    # by = "strata"
     # by = c(
     # "strata", "reals", "censoring_assumption", "fixed_time_horizon",
     # "competing_assumption"
